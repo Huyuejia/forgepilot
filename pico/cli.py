@@ -99,7 +99,6 @@ def _configured_secret_names(args):
     if extra_names.strip():
         configured_secret_names.update(
             item.strip().upper()
-            item.strip().upper()
             for item in extra_names.split(",")  # 按逗号分隔多个变量名
             if item.strip()
         )
