@@ -1,0 +1,49 @@
+usage: __main__.py [-h] [--cwd CWD]
+                   [--provider {ollama,openai,anthropic,deepseek}]
+                   [--model MODEL] [--host HOST] [--base-url BASE_URL]
+                   [--ollama-timeout OLLAMA_TIMEOUT]
+                   [--openai-timeout OPENAI_TIMEOUT] [--resume RESUME]
+                   [--approval {ask,auto,never}]
+                   [--secret-env-name SECRET_ENV_NAMES]
+                   [--max-steps MAX_STEPS] [--max-new-tokens MAX_NEW_TOKENS]
+                   [--temperature TEMPERATURE] [--top-p TOP_P]
+                   [prompt ...]
+
+Minimal coding agent for Ollama, OpenAI-compatible, Anthropic-compatible, or
+DeepSeek models.
+
+positional arguments:
+  prompt                Optional one-shot prompt. (default: None)
+
+options:
+  -h, --help            show this help message and exit
+  --cwd CWD             Workspace directory. (default: .)
+  --provider {ollama,openai,anthropic,deepseek}
+                        Model backend to use. (default: openai)
+  --model MODEL         Model name override. Defaults to qwen3.5:4b for
+                        Ollama, PICO_OPENAI_MODEL for openai,
+                        PICO_ANTHROPIC_MODEL for anthropic, and
+                        PICO_DEEPSEEK_MODEL for deepseek when set. (default:
+                        None)
+  --host HOST           Ollama server URL. (default: http://127.0.0.1:11434)
+  --base-url BASE_URL   Provider API base URL for openai, anthropic, or
+                        deepseek. (default: None)
+  --ollama-timeout OLLAMA_TIMEOUT
+                        Ollama request timeout in seconds. (default: 300)
+  --openai-timeout OPENAI_TIMEOUT
+                        OpenAI-compatible request timeout in seconds.
+                        (default: 300)
+  --resume RESUME       Session id to resume or 'latest'. (default: None)
+  --approval {ask,auto,never}
+                        Approval policy for risky tools. (default: ask)
+  --secret-env-name SECRET_ENV_NAMES
+                        Extra environment variable names to treat as secrets
+                        for trace/report redaction. (default: [])
+  --max-steps MAX_STEPS
+                        Maximum tool/model iterations per request. (default:
+                        6)
+  --max-new-tokens MAX_NEW_TOKENS
+                        Maximum model output tokens per step. (default: 512)
+  --temperature TEMPERATURE
+                        Sampling temperature sent to Ollama. (default: 0.2)
+  --top-p TOP_P         Top-p sampling value sent to Ollama. (default: 0.9)
