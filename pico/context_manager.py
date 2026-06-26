@@ -118,6 +118,8 @@ class ContextManager:
             section_texts["prefix"] = checkpoint_text + "\n\n" + section_texts["prefix"]
         if hasattr(self.agent, "plan_text"):
             section_texts["memory"] = section_texts["memory"] + "\n\n" + str(self.agent.plan_text())
+        if hasattr(self.agent, "skill_text"):
+            section_texts["memory"] = section_texts["memory"] + "\n\n" + str(self.agent.skill_text(user_message))
         selected_notes = []
         if memory_enabled and relevant_memory_enabled and hasattr(self.agent, "memory") and hasattr(self.agent.memory, "retrieval_candidates"):
             selected_notes = self.agent.memory.retrieval_candidates(user_message, limit=RELEVANT_MEMORY_LIMIT)

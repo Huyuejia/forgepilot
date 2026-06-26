@@ -416,6 +416,11 @@ class Pico:
     def plan_text(self):
         return planner.render_plan_text(self.session.get("plan"))
 
+    def skill_text(self, user_message):
+        from . import skills
+
+        return skills.render_relevant_skills(user_message)
+
     def set_plan_items(self, items):
         self.session["plan"] = planner.set_plan_items(self.session.get("plan"), items)
         self.session_path = self.session_store.save(self.session)
