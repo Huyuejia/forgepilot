@@ -16,6 +16,7 @@ from datetime import datetime
 from pathlib import Path
 
 from . import memory as memorylib
+from . import planner
 from .context_manager import ContextManager
 from .run_store import RunStore
 from .task_state import TaskState
@@ -175,6 +176,7 @@ class Pico:
         resume_state = self.session.setdefault("resume_state", {})
         if not isinstance(resume_state, dict):
             self.session["resume_state"] = {}
+        self.session["plan"] = planner.normalize_plan_state(self.session.get("plan"))
 
     def current_runtime_identity(self):
         return {
@@ -407,6 +409,19 @@ class Pico:
 
     def memory_text(self):
         return self.memory.render_memory_text()
+
+    def plan_text(self):
+        return planner.render_plan_text(self.session.get("plan"))
+
+    def set_plan_items(self, items):
+        self.session["plan"] = planner.set_plan_items(self.session.get("plan"), items)
+        self.session_path = self.session_store.save(self.session)
+        return self.session["plan"]
+
+    def update_plan_item_status(self, item_id, status):
+        self.session["plan"] = planner.update_plan_item_status(self.session.get("plan"), item_id, status)
+        self.session_path = self.session_store.save(self.session)
+        return self.session["plan"]
 
     def history_text(self):
         history = self.session["history"]
@@ -1162,6 +1177,8 @@ class Pico:
             "durable_rejections": list(self.last_durable_rejections),
             "durable_superseded": list(self.last_durable_superseded),
             "redacted_env": self.detected_secret_env_summary(),
+            "plan": planner.plan_summary(self.session.get("plan")),
+            "plan_items": planner.normalize_plan_state(self.session.get("plan"))["items"],
         }
 
     def tool_example(self, name):
