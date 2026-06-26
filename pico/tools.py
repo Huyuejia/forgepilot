@@ -42,6 +42,11 @@ BASE_TOOL_SPECS = {
         "risky": True,
         "description": "Replace one exact text block in a file.",
     },
+    "update_plan": {
+        "schema": {"items": "list[dict|str]"},
+        "risky": False,
+        "description": "Update the visible task plan for the current user request.",
+    },
 }
 
 DELEGATE_TOOL_SPEC = {
@@ -58,6 +63,7 @@ TOOL_EXAMPLES = {
     "write_file": '<tool name="write_file" path="binary_search.py"><content>def binary_search(nums, target):\n    return -1\n</content></tool>',
     "patch_file": '<tool name="patch_file" path="binary_search.py"><old_text>return -1</old_text><new_text>return mid</new_text></tool>',
     "delegate": '<tool>{"name":"delegate","args":{"task":"inspect README.md","max_steps":3}}</tool>',
+    "update_plan": '<tool>{"name":"update_plan","args":{"items":[{"text":"Read code","status":"completed"},{"text":"Run tests","status":"in_progress"}]}}</tool>',
 }
 
 
@@ -143,6 +149,12 @@ def validate_tool(agent, name, args):
         task = str(args.get("task", "")).strip()
         if not task:
             raise ValueError("task must not be empty")
+        return
+
+    if name == "update_plan":
+        items = args.get("items")
+        if not isinstance(items, list) or not items:
+            raise ValueError("items must be a non-empty list")
         return
 
 
@@ -288,6 +300,14 @@ def tool_delegate(agent, args):
     return "delegate_result:\n" + child.ask(task)
 
 
+def tool_update_plan(agent, args):
+    items = args.get("items")
+    if not isinstance(items, list) or not items:
+        raise ValueError("items must be a non-empty list")
+    state = agent.set_plan_items(items)
+    return f"updated plan with {len(state['items'])} items"
+
+
 _TOOL_RUNNERS = {
     "list_files": tool_list_files,
     "read_file": tool_read_file,
@@ -295,4 +315,5 @@ _TOOL_RUNNERS = {
     "run_shell": tool_run_shell,
     "write_file": tool_write_file,
     "patch_file": tool_patch_file,
+    "update_plan": tool_update_plan,
 }

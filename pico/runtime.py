@@ -336,6 +336,7 @@ class Pico:
                 '<tool name="write_file" path="binary_search.py"><content>def binary_search(nums, target):\n    return -1\n</content></tool>',
                 '<tool name="patch_file" path="binary_search.py"><old_text>return -1</old_text><new_text>return mid</new_text></tool>',
                 '<tool>{"name":"run_shell","args":{"command":"uv run --with pytest python -m pytest -q","timeout":20}}</tool>',
+                '<tool>{"name":"update_plan","args":{"items":[{"text":"Inspect code","status":"completed"},{"text":"Run tests","status":"in_progress"}]}}</tool>',
                 "<final>Done.</final>",
             ]
         )
@@ -362,6 +363,8 @@ class Pico:
             - New files should be complete and runnable, including obvious imports.
             - Do not repeat the same tool call with the same arguments if it did not help. Choose a different tool or return a final answer.
             - Required tool arguments must not be empty. Do not call read_file, write_file, patch_file, run_shell, or delegate with args={{}}.
+            - Use update_plan when a task has multiple steps, when progress changes, or when you become blocked.
+            - Keep exactly one plan item in_progress unless all items are completed or blocked.
 
             Tools:
             {tool_text}

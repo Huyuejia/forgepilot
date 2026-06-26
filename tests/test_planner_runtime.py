@@ -46,3 +46,24 @@ def test_report_contains_plan_summary(tmp_path):
     assert report["plan"]["total"] == 2
     assert report["plan"]["in_progress"] == 1
     assert report["plan"]["pending"] == 1
+
+
+def test_update_plan_tool_updates_session_plan(tmp_path):
+    agent = build_agent(tmp_path, [])
+
+    result = agent.run_tool(
+        "update_plan",
+        {
+            "items": [
+                {"text": "Read code", "status": "completed"},
+                {"text": "Run tests", "status": "in_progress"},
+            ]
+        },
+    )
+
+    assert result == "updated plan with 2 items"
+    assert agent.session["plan"]["items"] == [
+        {"id": "step-1", "text": "Read code", "status": "completed"},
+        {"id": "step-2", "text": "Run tests", "status": "in_progress"},
+    ]
+    assert "Run tests" in agent.plan_text()

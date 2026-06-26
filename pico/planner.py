@@ -83,15 +83,22 @@ def normalize_plan_state(state):
 
 def set_plan_items(state, items):
     normalized_items = []
-    for text in list(items or [])[:MAX_PLAN_ITEMS]:
-        cleaned = _clean_text(text)
-        if not cleaned:
+    for raw in list(items or [])[:MAX_PLAN_ITEMS]:
+        if isinstance(raw, dict):
+            text = _clean_text(raw.get("text") or raw.get("step") or raw.get("title"))
+            status = str(raw.get("status", PLAN_STATUS_PENDING)).strip()
+            if status not in PLAN_STATUSES:
+                status = PLAN_STATUS_PENDING
+        else:
+            text = _clean_text(raw)
+            status = PLAN_STATUS_IN_PROGRESS if not normalized_items else PLAN_STATUS_PENDING
+        if not text:
             continue
         normalized_items.append(
             {
                 "id": f"step-{len(normalized_items) + 1}",
-                "text": cleaned,
-                "status": PLAN_STATUS_IN_PROGRESS if not normalized_items else PLAN_STATUS_PENDING,
+                "text": text,
+                "status": status,
             }
         )
     return normalize_plan_state({"items": normalized_items})
