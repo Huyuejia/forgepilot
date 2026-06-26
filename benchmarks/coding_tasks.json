@@ -142,6 +142,16 @@
       "expected_artifact": "README.md fixture stays available while durable rejection is recorded",
       "verifier": "python3 -c \"import json; from pathlib import Path; report = json.loads(next(Path('.pico/runs').glob('*/report.json')).read_text(encoding='utf-8')); assert report['durable_rejections'] == ['dependency-facts:secret_shaped', 'key-decisions:transient_task_state']; assert report['durable_promotions'] == ['project-conventions: Keep verifier outcomes stable across reruns.']\"",
       "category": "durable-contract"
+    },
+    {
+      "id": "plan_update_visible",
+      "prompt": "Create a two-step visible plan, mark reading as completed and testing as in progress, then finish.",
+      "fixture_repo": "tests/fixtures/bench_repo_readme",
+      "allowed_tools": ["update_plan"],
+      "step_budget": 3,
+      "expected_artifact": "report.json records visible plan state",
+      "verifier": "python3 -c \"import json; from pathlib import Path; report = json.loads(next(Path('.pico/runs').glob('*/report.json')).read_text(encoding='utf-8')); assert report['plan']['total'] == 2; assert report['plan']['completed'] == 1; assert report['plan']['in_progress'] == 1\"",
+      "category": "planning"
     }
   ]
 }

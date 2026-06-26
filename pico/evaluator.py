@@ -100,6 +100,10 @@ SCRIPTED_MODEL_OUTPUTS = {
     "durable_promotion_reject": [
         "<final>Project convention: Keep verifier outcomes stable across reruns.\nDependency: API key is sk-benchmark-secret.\nDecision: Current goal is debug the harness.</final>",
     ],
+    "plan_update_visible": [
+        '<tool>{"name":"update_plan","args":{"items":[{"text":"Read benchmark fixture","status":"completed"},{"text":"Run benchmark verifier","status":"in_progress"}]}}</tool>',
+        "<final>Done.</final>",
+    ],
 }
 
 

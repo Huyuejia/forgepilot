@@ -17,13 +17,14 @@ def test_load_benchmark_validates_fixed_schema():
     benchmark = load_benchmark(Path("benchmarks/coding_tasks.json"))
 
     assert benchmark["schema_version"] == 1
-    assert len(benchmark["tasks"]) == 12
+    assert len(benchmark["tasks"]) == 13
     assert Counter(task["category"] for task in benchmark["tasks"]) == {
         "documentation": 2,
         "text-edit": 2,
         "tool-boundary": 3,
         "recovery": 3,
         "durable-contract": 2,
+        "planning": 1,
     }
     for task in benchmark["tasks"]:
         assert {"id", "prompt", "fixture_repo", "allowed_tools", "step_budget", "expected_artifact", "verifier", "category"} <= set(task)
@@ -93,12 +94,12 @@ def test_run_fixed_benchmark_reports_metadata_and_success_definition(tmp_path):
 
     assert artifact["schema_version"] == 1
     assert artifact["summary"] == {
-        "total_tasks": 12,
-        "passed": 12,
+        "total_tasks": 13,
+        "passed": 13,
         "failed": 0,
         "pass_rate": 1.0,
-        "within_budget": 12,
-        "verifier_passes": 12,
+        "within_budget": 13,
+        "verifier_passes": 13,
         "within_budget_rate": 1.0,
         "verifier_pass_rate": 1.0,
         "failure_category_counts": {},
@@ -164,7 +165,7 @@ def test_run_harness_regression_v2_writes_named_artifact(tmp_path):
     )
 
     assert artifact_path.exists()
-    assert artifact["summary"]["total_tasks"] == 12
+    assert artifact["summary"]["total_tasks"] == 13
     assert artifact["summary"]["pass_rate"] == 1.0
     assert artifact["summary"]["within_budget_rate"] == 1.0
     assert artifact["summary"]["verifier_pass_rate"] == 1.0
@@ -225,3 +226,19 @@ def test_summarize_rows_counts_failure_categories():
         "budget_exceeded": 1,
         "verifier_failed": 1,
     }
+
+
+def test_run_fixed_benchmark_covers_planning_row(tmp_path):
+    artifact = run_fixed_benchmark(
+        benchmark_path=Path("benchmarks/coding_tasks.json"),
+        artifact_path=tmp_path / "benchmark-v1.json",
+        workspace_root=tmp_path / "workspaces",
+    )
+
+    planning_row = next(item for item in artifact["rows"] if item["id"] == "plan_update_visible")
+    report = planning_row["report"]
+
+    assert planning_row["status"] == "pass"
+    assert report["plan"]["total"] == 2
+    assert report["plan"]["completed"] == 1
+    assert report["plan"]["in_progress"] == 1
