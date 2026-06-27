@@ -1,4 +1,4 @@
-"""Small on-demand skill loader for Pico prompts."""
+"""Small on-demand skill loader for ForgePilot prompts."""
 
 from pathlib import Path
 

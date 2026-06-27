@@ -1,6 +1,6 @@
 """命令行入口。
 
-这个模块负责把“用户怎么启动 pico”翻译成 runtime 能理解的对象：
+这个模块负责把“用户怎么启动 ForgePilot”翻译成 runtime 能理解的对象：
 解析参数、挑模型后端、构建工作区快照、恢复或新建 session，
 最后进入 one-shot 或交互式循环。
 """
@@ -13,20 +13,20 @@ import textwrap  # 导入文本包装模块，用于处理多行字符串的缩�
 
 from .config import load_project_env, provider_env  # 导入加载项目环境变量和获取服务商环境配置的工具
 from .models import AnthropicCompatibleModelClient, OllamaModelClient, OpenAICompatibleModelClient  # 导入不同 AI 厂商的客户端类
-from .runtime import Pico, SessionStore  # 导入代理运行时的核心类和会话存储管理类
+from .runtime import ForgePilot, SessionStore  # 导入代理运行时的核心类和会话存储管理类
 from .workspace import WorkspaceContext, middle  # 导入工作区上下文管理工具和字符串截断工具
 
 # 定义一个元组，存储默认需要脱敏的敏感环境变量名称（防止在日志中泄露 API Key）
 DEFAULT_SECRET_ENV_NAMES = (
-    "PICO_OPENAI_API_KEY",
+    "FORGEPILOT_OPENAI_API_KEY",
     "OPENAI_API_KEY",
     "OPENAI_API_TOKEN",
-    "PICO_ANTHROPIC_API_KEY",
+    "FORGEPILOT_ANTHROPIC_API_KEY",
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_AUTH_TOKEN",
-    "PICO_DEEPSEEK_API_KEY",
+    "FORGEPILOT_DEEPSEEK_API_KEY",
     "DEEPSEEK_API_KEY",
-    "PICO_RIGHT_CODES_API_KEY",
+    "FORGEPILOT_RIGHT_CODES_API_KEY",
     "RIGHT_CODES_API_KEY",
     "GITHUB_PAT",
     "GH_PAT",
@@ -39,7 +39,7 @@ WELCOME_ART = (
     "       /   ^   \\\\",
     "      /|       |\\\\",
 )
-WELCOME_NAME = "pico"  # 代理名称
+WELCOME_NAME = "forgepilot"  # 代理名称
 WELCOME_SUBTITLE = "local coding agent"  # 代理副标题
 WELCOME_STATUS = "calm shell, ready for work"  # 状态描述
 HELP_DETAILS = textwrap.dedent(  # 使用 textwrap.dedent 自动去除多行字符串前面的缩进，保持格式整洁
@@ -64,7 +64,7 @@ DEFAULT_ANTHROPIC_BASE_URL = "https://www.right.codes/claude/v1"  # 默认的 An
 DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-pro"  # 默认的 DeepSeek 模型名称
 DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com/anthropic"  # 默认的 DeepSeek 接口地址
 LEGACY_SECRET_ENV_NAMES_VAR = "MINI_CODING_AGENT_SECRET_ENV_NAMES"  # 旧版的敏感变量配置名
-SECRET_ENV_NAMES_VAR = "PICO_SECRET_ENV_NAMES"  # 新版的敏感变量配置名
+SECRET_ENV_NAMES_VAR = "FORGEPILOT_SECRET_ENV_NAMES"  # 新版的敏感变量配置名
 
 # 定义一个内部函数，用于确定最终使用的模型名称
 def _effective_model(args, provider):
@@ -74,17 +74,17 @@ def _effective_model(args, provider):
         return explicit_model  # 优先级 1: 如果命令行指定了模型，直接使用
     if provider == "openai":
         # 优先级 2: 从环境变量读取，支持新旧两种环境变量名
-        model = provider_env("PICO_OPENAI_MODEL", ("OPENAI_MODEL",))
+        model = provider_env("FORGEPILOT_OPENAI_MODEL", ("OPENAI_MODEL",))
         if model:
             return model
         return DEFAULT_OPENAI_MODEL  # 优先级 3: 使用代码中定义的默认值
     if provider == "anthropic":
-        model = provider_env("PICO_ANTHROPIC_MODEL", ("ANTHROPIC_MODEL",))
+        model = provider_env("FORGEPILOT_ANTHROPIC_MODEL", ("ANTHROPIC_MODEL",))
         if model:
             return model
         return DEFAULT_ANTHROPIC_MODEL
     if provider == "deepseek":
-        model = provider_env("PICO_DEEPSEEK_MODEL", ("DEEPSEEK_MODEL",))
+        model = provider_env("FORGEPILOT_DEEPSEEK_MODEL", ("DEEPSEEK_MODEL",))
         if model:
             return model
         return DEFAULT_DEEPSEEK_MODEL
@@ -112,8 +112,8 @@ def _build_model_client(args):
     # 真正的提示词格式、缓存支持、HTTP 协议差异，都封装在 models.py 里。
     if provider == "openai":
         model = _effective_model(args, provider)
-        base_url = getattr(args, "base_url", None) or provider_env("PICO_OPENAI_API_BASE", ("OPENAI_API_BASE",), DEFAULT_OPENAI_BASE_URL)  # 确定 API 地址
-        api_key = provider_env("PICO_OPENAI_API_KEY", ("OPENAI_API_KEY",))  # 确定 API Key
+        base_url = getattr(args, "base_url", None) or provider_env("FORGEPILOT_OPENAI_API_BASE", ("OPENAI_API_BASE",), DEFAULT_OPENAI_BASE_URL)  # 确定 API 地址
+        api_key = provider_env("FORGEPILOT_OPENAI_API_KEY", ("OPENAI_API_KEY",))  # 确定 API Key
         return OpenAICompatibleModelClient(
             model=model,
             base_url=base_url,
@@ -123,10 +123,10 @@ def _build_model_client(args):
         )  # 返回一个 OpenAI 兼容客户端实例
     if provider == "anthropic":
         model = _effective_model(args, provider)
-        base_url = getattr(args, "base_url", None) or provider_env("PICO_ANTHROPIC_API_BASE", ("ANTHROPIC_API_BASE",), DEFAULT_ANTHROPIC_BASE_URL)
+        base_url = getattr(args, "base_url", None) or provider_env("FORGEPILOT_ANTHROPIC_API_BASE", ("ANTHROPIC_API_BASE",), DEFAULT_ANTHROPIC_BASE_URL)
         api_key = provider_env(
-            "PICO_ANTHROPIC_API_KEY",
-            ("ANTHROPIC_API_KEY", "PICO_RIGHT_CODES_API_KEY", "RIGHT_CODES_API_KEY", "PICO_OPENAI_API_KEY", "OPENAI_API_KEY"),
+            "FORGEPILOT_ANTHROPIC_API_KEY",
+            ("ANTHROPIC_API_KEY", "FORGEPILOT_RIGHT_CODES_API_KEY", "RIGHT_CODES_API_KEY", "FORGEPILOT_OPENAI_API_KEY", "OPENAI_API_KEY"),
         )
         return AnthropicCompatibleModelClient(
             model=model,
@@ -137,8 +137,8 @@ def _build_model_client(args):
         )
     if provider == "deepseek":
         model = _effective_model(args, provider)
-        base_url = getattr(args, "base_url", None) or provider_env("PICO_DEEPSEEK_API_BASE", ("DEEPSEEK_API_BASE",), DEFAULT_DEEPSEEK_BASE_URL)
-        api_key = provider_env("PICO_DEEPSEEK_API_KEY", ("DEEPSEEK_API_KEY",))
+        base_url = getattr(args, "base_url", None) or provider_env("FORGEPILOT_DEEPSEEK_API_BASE", ("DEEPSEEK_API_BASE",), DEFAULT_DEEPSEEK_BASE_URL)
+        api_key = provider_env("FORGEPILOT_DEEPSEEK_API_KEY", ("DEEPSEEK_API_KEY",))
         return AnthropicCompatibleModelClient(
             model=model,
             base_url=base_url,
@@ -208,13 +208,13 @@ def build_agent(args):
     workspace = WorkspaceContext.build(args.cwd)  # 1. 扫描当前目录，建立工作区快照
     load_project_env(workspace.repo_root)  # 2. 尝试加载项目根目录下的 .env 文件
     configured_secret_names = _configured_secret_names(args)  # 3. 确定脱敏名单
-    store = SessionStore(workspace.repo_root + "/.pico/sessions")  # 4. 初始化会话存储器
+    store = SessionStore(workspace.repo_root + "/.ForgePilot/sessions")  # 4. 初始化会话存储器
     model = _build_model_client(args)  # 5. 构建 AI 客户端
     session_id = args.resume  # 6. 处理恢复会话逻辑
     if session_id == "latest":
         session_id = store.latest()  # 如果参数是 latest，找最近的一个 json 文件
     if session_id:
-        return Pico.from_session(  # 从旧的会话数据恢复 Pico 实例
+        return ForgePilot.from_session(  # 从旧的会话数据恢复 ForgePilot 实例
             model_client=model,
             workspace=workspace,
             session_store=store,
@@ -224,7 +224,7 @@ def build_agent(args):
             max_new_tokens=args.max_new_tokens,
             secret_env_names=configured_secret_names,
         )
-    return Pico(  # 否则，创建一个全新的 Pico 实例
+    return ForgePilot(  # 否则，创建一个全新的 ForgePilot 实例
         model_client=model,
         workspace=workspace,
         session_store=store,
@@ -246,7 +246,7 @@ def build_arg_parser():
     parser.add_argument(
         "--model",
         default=None,
-        help="Model name override. Defaults to qwen3.5:4b for Ollama, PICO_OPENAI_MODEL for openai, PICO_ANTHROPIC_MODEL for anthropic, and PICO_DEEPSEEK_MODEL for deepseek when set.",
+        help="Model name override. Defaults to qwen3.5:4b for Ollama, FORGEPILOT_OPENAI_MODEL for openai, FORGEPILOT_ANTHROPIC_MODEL for anthropic, and FORGEPILOT_DEEPSEEK_MODEL for deepseek when set.",
     )
     parser.add_argument("--host", default=DEFAULT_OLLAMA_HOST, help="Ollama server URL.")
     parser.add_argument("--base-url", default=None, help="Provider API base URL for openai, anthropic, or deepseek.")
@@ -293,7 +293,7 @@ def main(argv=None):
         # 交互模式：每次读取一条用户输入，交给同一个 agent，
         # 因此 session history 和 working memory 会跨轮延续。
         try:
-            user_input = input("\npico> ").strip()  # 获取用户输入
+            user_input = input("\nforgepilot> ").strip()  # 获取用户输入
         except (EOFError, KeyboardInterrupt):  # 捕获 Ctrl+C 或 Ctrl+D
             print("")
             return 0  # 优雅退出

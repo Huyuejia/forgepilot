@@ -50,3 +50,8 @@ docs/
 pico.egg-info/
 .vendor/
 .vendor/
+
+# Local ForgePilot runtime files
+.ForgePilot/
+.claude/
+experiments/smoke_pico_minimal.log

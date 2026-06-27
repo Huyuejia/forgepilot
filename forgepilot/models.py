@@ -11,7 +11,7 @@ from http.client import RemoteDisconnected
 import urllib.error
 import urllib.request
 
-OPENAI_COMPATIBLE_USER_AGENT = "pico/0.1"
+OPENAI_COMPATIBLE_USER_AGENT = "ForgePilot/0.1"
 
 
 class FakeModelClient:
@@ -249,33 +249,51 @@ class OpenAICompatibleModelClient:
           `self.last_completion_metadata`
 
         在 agent 链路里的位置：
-        它位于 `Pico.ask()` 的模型调用阶段，是稳定前缀缓存复用链路真正
+        它位于 `ForgePilot.ask()` 的模型调用阶段，是稳定前缀缓存复用链路真正
         落到 provider API 的地方。
         """
         self.last_completion_metadata = {}
-        payload = {
-            "model": self.model,
-            "input": [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "input_text",
-                            "text": prompt,
-                        }
-                    ],
-                }
-            ],
-            "max_output_tokens": max_new_tokens,
-            "stream": False,
-        }
+        use_responses_api = self.supports_prompt_cache
+
+        if use_responses_api:
+            payload = {
+                "model": self.model,
+                "input": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "input_text",
+                                "text": prompt,
+                            }
+                        ],
+                    }
+                ],
+                "max_output_tokens": max_new_tokens,
+                "stream": False,
+            }
+            endpoint = "/responses"
+        else:
+            payload = {
+                "model": self.model,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": prompt,
+                    }
+                ],
+                "max_tokens": max_new_tokens,
+                "stream": False,
+            }
+            endpoint = "/chat/completions"
+
         if self.temperature is not None:
             payload["temperature"] = self.temperature
         # runtime 传入的是“稳定前缀”的签名，而不是整段 prompt 的签名。
         # 这样缓存复用针对的是稳定段，不会因为动态 history 每轮变化而失效。
-        if self.supports_prompt_cache and prompt_cache_key:
+        if use_responses_api and self.supports_prompt_cache and prompt_cache_key:
             payload["prompt_cache_key"] = prompt_cache_key
-        if self.supports_prompt_cache and prompt_cache_retention:
+        if use_responses_api and self.supports_prompt_cache and prompt_cache_retention:
             payload["prompt_cache_retention"] = prompt_cache_retention
 
         headers = {
@@ -287,7 +305,7 @@ class OpenAICompatibleModelClient:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
         request = urllib.request.Request(
-            self.base_url + "/responses",
+            self.base_url + endpoint,
             data=json.dumps(payload).encode("utf-8"),
             headers=headers,
             method="POST",
@@ -347,7 +365,10 @@ class OpenAICompatibleModelClient:
             "prompt_cache_retention": prompt_cache_retention,
             **_extract_usage_cache_details(data),
         }
-        return _extract_openai_text(data)
+        text = _extract_openai_text(data)
+        if text:
+            return text
+        raise RuntimeError("OpenAI-compatible error: could not extract text from response")
 
 
 def _extract_anthropic_text(data):

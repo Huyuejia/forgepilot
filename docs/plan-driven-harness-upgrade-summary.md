@@ -1,10 +1,10 @@
-# Pico 计划驱动工程代理增强包：项目总结
+# forgepilot 计划驱动工程代理增强包：项目总结
 
 ## 一句话概括
 
-本次二次开发把 Pico 从一个轻量本地 coding agent harness，升级成了一个具备“显式计划、模型可更新计划、运行报告可观测、benchmark 可评测、技能按需加载”的工程代理实验台。
+本次二次开发把 forgepilot 从一个轻量本地 coding agent harness，升级成了一个具备“显式计划、模型可更新计划、运行报告可观测、benchmark 可评测、技能按需加载”的工程代理实验台。
 
-它不是简单加几个命令，而是在 Pico 原有 runtime、tools、memory、context_manager、run_store、evaluator 分层上，补上了 Claude Code 类 agent harness 中很关键的两类机制：
+它不是简单加几个命令，而是在 forgepilot 原有 runtime、tools、memory、context_manager、run_store、evaluator 分层上，补上了 Claude Code 类 agent harness 中很关键的两类机制：
 
 - 计划层：回答“接下来做什么、做到哪一步了”。
 - 技能层：回答“遇到特定任务时，该加载哪类专业指导”。
@@ -13,7 +13,7 @@
 
 ### 1. 结构化计划状态
 
-新增 `pico/planner.py`，定义计划项的四种状态：
+新增 `forgepilot/planner.py`，定义计划项的四种状态：
 
 - `pending`
 - `in_progress`
@@ -28,14 +28,14 @@
 
 ### 2. Runtime / Prompt / Report 接入计划
 
-在 `pico/runtime.py` 中增加：
+在 `forgepilot/runtime.py` 中增加：
 
 - `plan_text()`：把计划渲染成人类可读文本。
 - `set_plan_items()`：设置当前计划。
 - `update_plan_item_status()`：更新单个计划项状态。
 - `build_report()`：把计划 summary 和 plan items 写入 run report。
 
-在 `pico/context_manager.py` 中把计划文本加入 prompt，使模型在每轮推理时能看到当前计划。
+在 `forgepilot/context_manager.py` 中把计划文本加入 prompt，使模型在每轮推理时能看到当前计划。
 
 对应测试：
 
@@ -43,7 +43,7 @@
 
 ### 3. 模型可调用的 update_plan 工具
 
-在 `pico/tools.py` 中新增 safe tool：
+在 `forgepilot/tools.py` 中新增 safe tool：
 
 ```text
 update_plan(items: list[dict|str])
@@ -59,13 +59,13 @@ update_plan(items: list[dict|str])
 
 ### 4. REPL /plan 命令
 
-在 `pico/cli.py` 中新增：
+在 `forgepilot/cli.py` 中新增：
 
 ```text
 /plan
 ```
 
-用于在 Pico REPL 中查看当前任务计划。
+用于在 forgepilot REPL 中查看当前任务计划。
 
 ### 5. Benchmark 覆盖计划层
 
@@ -75,7 +75,7 @@ update_plan(items: list[dict|str])
 plan_update_visible
 ```
 
-在 `pico/evaluator.py` 中为该任务增加 scripted model output：先调用 `update_plan`，再返回 final。
+在 `forgepilot/evaluator.py` 中为该任务增加 scripted model output：先调用 `update_plan`，再返回 final。
 
 在 `tests/test_evaluator.py` 中验证：
 
@@ -87,13 +87,13 @@ plan_update_visible
 
 新增轻量 skill 系统：
 
-- `pico/skills.py`
-- `pico/builtin_skills/code-review-expert.md`
+- `forgepilot/skills.py`
+- `forgepilot/builtin_skills/code-review-expert.md`
 - `tests/test_skills.py`
 
-当用户请求中出现 review、安全、审查、性能、SOLID 等关键词时，Pico 会把 `code-review-expert` 的指导内容渲染进 prompt。
+当用户请求中出现 review、安全、审查、性能、SOLID 等关键词时，forgepilot 会把 `code-review-expert` 的指导内容渲染进 prompt。
 
-这一步的意义是：Pico 不需要把所有专业规则常驻 prompt，而是按任务需要加载相关技能卡片，降低 prompt 噪声，也更接近 Claude Code 的 skill 机制。
+这一步的意义是：forgepilot 不需要把所有专业规则常驻 prompt，而是按任务需要加载相关技能卡片，降低 prompt 噪声，也更接近 Claude Code 的 skill 机制。
 
 ## 提交记录
 
@@ -127,14 +127,14 @@ dc49d3a feat: add update plan tool and command
 当前仓库还可能有这些未提交项：
 
 ```text
- M pico/models.py
+ M forgepilot/models.py
 ?? .claude/
 ?? experiments/smoke_pico_minimal.log
 ```
 
 它们不属于本次 plan / skills 改造主线：
 
-- `pico/models.py` 是此前已有改动，需要单独判断是否保留。
+- `forgepilot/models.py` 是此前已有改动，需要单独判断是否保留。
 - `.claude/` 是 Claude Code 的本地配置，不建议提交。
 - `experiments/smoke_pico_minimal.log` 是实验日志，不建议和功能代码一起提交。
 
@@ -142,7 +142,7 @@ dc49d3a feat: add update plan tool and command
 
 ### 演示 1：计划状态渲染
 
-运行 Pico 后让模型做多步骤任务，观察 prompt/report 中出现计划状态。
+运行 forgepilot 后让模型做多步骤任务，观察 prompt/report 中出现计划状态。
 
 ### 演示 2：update_plan 工具
 
@@ -156,7 +156,7 @@ dc49d3a feat: add update plan tool and command
 
 ### 演示 3：report.json 可观测性
 
-一次 run 结束后查看 `.pico/runs/.../report.json`，确认其中包含：
+一次 run 结束后查看 `.forgepilot/runs/.../report.json`，确认其中包含：
 
 ```json
 {
@@ -187,13 +187,13 @@ please review this diff for security issues
 帮我做一次代码审查，重点看安全和边界条件
 ```
 
-Pico prompt 中会出现 `Relevant skills: code-review-expert`。
+forgepilot prompt 中会出现 `Relevant skills: code-review-expert`。
 
 ## 简历写法
 
 可以写成：
 
-> 二次开发 Pico 本地 coding agent harness，参考 Claude Code 的 Todo/Skill 机制，新增结构化计划状态、模型可调用 `update_plan` 工具、REPL `/plan` 命令、run report 计划可观测性、benchmark planning 覆盖，并实现关键词触发的 `code-review-expert` 按需技能加载；补充 pytest 回归测试，核心测试 98 passed。
+> 二次开发 forgepilot 本地 coding agent harness，参考 Claude Code 的 Todo/Skill 机制，新增结构化计划状态、模型可调用 `update_plan` 工具、REPL `/plan` 命令、run report 计划可观测性、benchmark planning 覆盖，并实现关键词触发的 `code-review-expert` 按需技能加载；补充 pytest 回归测试，核心测试 98 passed。
 
 更工程化一点：
 

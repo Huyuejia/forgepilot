@@ -1,10 +1,10 @@
-# Pico 二次开发原理说明：你到底实现了什么
+# forgepilot 二次开发原理说明：你到底实现了什么
 
 ## 先回答最重要的问题
 
 你这次不是在“让 AI 帮你随便改代码”。你做的是一个 agent harness 的二次开发。
 
-Pico 原来已经有这些能力：
+forgepilot 原来已经有这些能力：
 
 - 可以和模型对话。
 - 可以让模型调用工具读写文件、运行命令。
@@ -58,16 +58,16 @@ Claude Code 被用来做具体小任务，例如：
 
 ### WSL 终端：真实测试和 Git 提交
 
-你的 Pico 项目实际测试环境在 WSL 里更稳定：
+你的 forgepilot 项目实际测试环境在 WSL 里更稳定：
 
 ```text
-/mnt/d/AIProjects/pico-main/pico-main
+/mnt/d/AIProjects/forgepilot-main/forgepilot-main
 ```
 
 而 Claude Code 启动后经常落在 Windows PowerShell 环境：
 
 ```text
-D:\AIProjects\pico-main\pico-main
+D:\AIProjects\forgepilot-main\forgepilot-main
 ```
 
 这会导致：
@@ -87,7 +87,7 @@ D:\AIProjects\pico-main\pico-main
 
 ## Task 1：planner.py 是干什么的
 
-`pico/planner.py` 是计划状态核心模块。
+`forgepilot/planner.py` 是计划状态核心模块。
 
 它把“我要做几步”变成结构化数据，而不是普通文本。
 
@@ -124,7 +124,7 @@ Plan:
 
 ## Task 2：为什么要接入 runtime / prompt / report
 
-`runtime.py` 是 Pico 的主循环核心。
+`runtime.py` 是 forgepilot 的主循环核心。
 
 模型每次工作时，大概经过这个流程：
 
@@ -132,7 +132,7 @@ Plan:
 用户请求
 -> ContextManager 拼 prompt
 -> 模型返回 tool 或 final
--> Pico 执行工具
+-> forgepilot 执行工具
 -> 记录 trace/report/session
 ```
 
@@ -186,7 +186,7 @@ self.session["plan"]
 <tool>{"name":"update_plan","args":{"items":[{"text":"Read code","status":"completed"},{"text":"Run tests","status":"in_progress"}]}}</tool>
 ```
 
-Pico 收到这个 tool call 后，会执行：
+forgepilot 收到这个 tool call 后，会执行：
 
 ```python
 agent.set_plan_items(items)
@@ -202,9 +202,9 @@ Claude Code 也有类似 TodoWrite 的机制。核心思想是：
 
 ## /plan 命令是什么
 
-`/plan` 是 Pico REPL 里的查看命令。
+`/plan` 是 forgepilot REPL 里的查看命令。
 
-你在交互式 Pico 里输入：
+你在交互式 forgepilot 里输入：
 
 ```text
 /plan
@@ -231,7 +231,7 @@ plan_update_visible
 3. 把 testing 标记为 in_progress。
 4. 结束任务。
 
-然后 verifier 检查 `.pico/runs/.../report.json`：
+然后 verifier 检查 `.forgepilot/runs/.../report.json`：
 
 ```python
 assert report['plan']['total'] == 2
@@ -239,15 +239,15 @@ assert report['plan']['completed'] == 1
 assert report['plan']['in_progress'] == 1
 ```
 
-这说明你的计划层不是“看起来能用”，而是进入了 Pico 的评测闭环。
+这说明你的计划层不是“看起来能用”，而是进入了 forgepilot 的评测闭环。
 
 ## 阶段二 A：skills 按需加载是什么
 
 你新增了：
 
 ```text
-pico/skills.py
-pico/builtin_skills/code-review-expert.md
+forgepilot/skills.py
+forgepilot/builtin_skills/code-review-expert.md
 tests/test_skills.py
 ```
 
@@ -269,7 +269,7 @@ tests/test_skills.py
 帮我做一次代码审查，重点看安全和边界条件
 ```
 
-Pico prompt 中会出现：
+forgepilot prompt 中会出现：
 
 ```text
 Relevant skills:
@@ -278,7 +278,7 @@ Relevant skills:
 Default to review-only...
 ```
 
-这不是让 Claude Code review 你的代码，而是让 Pico 自己学会“按任务加载专业提示词”。
+这不是让 Claude Code review 你的代码，而是让 forgepilot 自己学会“按任务加载专业提示词”。
 
 ## 为什么要先写测试
 
@@ -357,7 +357,7 @@ python3 -c ...
 experiments/smoke_pico_minimal.log
 ```
 
-还要确认 `pico/models.py` 是不是你想保留的改动。如果不是本项目主线，先不要提交。
+还要确认 `forgepilot/models.py` 是不是你想保留的改动。如果不是本项目主线，先不要提交。
 
 建议加到 `.gitignore`：
 
@@ -375,7 +375,7 @@ experiments/*.log
 在 GitHub 网页上新建一个 repo，例如：
 
 ```text
-pico-plan-driven-agent
+forgepilot-plan-driven-agent
 ```
 
 不要勾选初始化 README，因为本地已有仓库。
@@ -383,9 +383,9 @@ pico-plan-driven-agent
 然后在 WSL 里执行：
 
 ```bash
-cd /mnt/d/AIProjects/pico-main/pico-main
-git remote add origin https://github.com/你的用户名/pico-plan-driven-agent.git
-git push -u origin codex/pico-plan-driven-harness
+cd /mnt/d/AIProjects/forgepilot-main/forgepilot-main
+git remote add origin https://github.com/你的用户名/forgepilot-plan-driven-agent.git
+git push -u origin codex/forgepilot-plan-driven-harness
 ```
 
 如果你想把当前分支作为 GitHub 默认主分支，可以之后在 GitHub 上设置 default branch，或本地改名：
@@ -399,11 +399,11 @@ git push -u origin main
 
 ### 方案 B：fork 原仓库后推分支
 
-如果 Pico 原项目在 GitHub 上，你可以先 fork，然后：
+如果 forgepilot 原项目在 GitHub 上，你可以先 fork，然后：
 
 ```bash
-git remote add origin https://github.com/你的用户名/pico-main.git
-git push -u origin codex/pico-plan-driven-harness
+git remote add origin https://github.com/你的用户名/forgepilot-main.git
+git push -u origin codex/forgepilot-plan-driven-harness
 ```
 
 这个方式更适合说明“我基于开源项目做二次开发”。
@@ -425,7 +425,7 @@ docs/plan-driven-harness-upgrade-principles.md
 
 你可以按这个顺序讲：
 
-1. Pico 是一个本地 coding agent harness。
+1. forgepilot 是一个本地 coding agent harness。
 2. 原项目已有工具调用、记忆、上下文管理、checkpoint、report、benchmark。
 3. 我参考 Claude Code 的 Todo/Skill 思路，补了计划层和按需技能层。
 4. 计划层包括 planner 状态模型、update_plan 工具、prompt/report 接入、/plan 命令。
@@ -436,7 +436,7 @@ docs/plan-driven-harness-upgrade-principles.md
 
 可以写：
 
-> 基于 Python 二次开发本地 coding agent harness Pico，参考 Claude Code 的 Todo/Skill 机制，实现结构化任务计划、模型可调用 `update_plan` 工具、REPL `/plan` 命令、run report 可观测性、benchmark planning 覆盖和关键词触发的按需 skill 加载；补充 pytest 回归测试，核心测试 98 passed。
+> 基于 Python 二次开发本地 coding agent harness forgepilot，参考 Claude Code 的 Todo/Skill 机制，实现结构化任务计划、模型可调用 `update_plan` 工具、REPL `/plan` 命令、run report 可观测性、benchmark planning 覆盖和关键词触发的按需 skill 加载；补充 pytest 回归测试，核心测试 98 passed。
 
 或者更短：
 

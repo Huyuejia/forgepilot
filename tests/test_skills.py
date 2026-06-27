@@ -1,4 +1,4 @@
-from pico.skills import load_builtin_skills, render_relevant_skills, select_relevant_skills
+from forgepilot.skills import load_builtin_skills, render_relevant_skills, select_relevant_skills
 
 
 def test_builtin_code_review_skill_is_selected_for_review_requests():

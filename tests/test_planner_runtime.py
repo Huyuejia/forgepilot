@@ -1,6 +1,6 @@
 import json
 
-from pico import FakeModelClient, MiniAgent, SessionStore, WorkspaceContext
+from forgepilot import FakeModelClient, MiniAgent, SessionStore, WorkspaceContext
 
 
 def build_workspace(tmp_path):
@@ -10,7 +10,7 @@ def build_workspace(tmp_path):
 
 def build_agent(tmp_path, outputs):
     workspace = build_workspace(tmp_path)
-    store = SessionStore(tmp_path / ".pico" / "sessions")
+    store = SessionStore(tmp_path / ".ForgePilot" / "sessions")
     return MiniAgent(
         model_client=FakeModelClient(outputs),
         workspace=workspace,

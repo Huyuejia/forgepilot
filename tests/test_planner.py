@@ -1,4 +1,4 @@
-from pico.planner import (
+from forgepilot.planner import (
     PLAN_STATUSES,
     PLAN_STATUS_BLOCKED,
     PLAN_STATUS_COMPLETED,

@@ -1,4 +1,4 @@
-"""Structured task plan state for Pico.
+"""Structured task plan state for ForgePilot.
 
 The plan layer is intentionally small: it tracks what the agent is doing now,
 what remains, and what is blocked. It complements memory instead of replacing it.
