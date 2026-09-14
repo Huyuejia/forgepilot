@@ -291,7 +291,8 @@ def test_welcome_screen_keeps_box_shape_for_long_paths(tmp_path):
     assert "(  o o  )" in welcome
     assert "MINI-CODING-AGENT" not in welcome
     assert "MINI CODING AGENT" not in welcome
-    assert "forgepilot" in welcome
+    assert "ForgePilot" in welcome
+    assert "pico" not in welcome.lower()
     assert "local coding agent" in welcome
     assert "// READY" not in welcome
     assert "SLASH" not in welcome
