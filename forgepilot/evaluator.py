@@ -372,7 +372,6 @@ def _apply_task_setup(agent, task, fixture_copy_root):
         agent.session_store.save(agent.session)
         return
 
-
 class BenchmarkEvaluator:
     def __init__(
         self,

@@ -14,6 +14,12 @@ import urllib.request
 OPENAI_COMPATIBLE_USER_AGENT = "ForgePilot/0.1"
 
 
+class ModelExhaustedError(RuntimeError):
+    """Typed signal used when a finite test/model source has no next response."""
+
+    code = "model_outputs_exhausted"
+
+
 class FakeModelClient:
     def __init__(self, outputs):
         self.outputs = list(outputs)
@@ -22,11 +28,11 @@ class FakeModelClient:
         self.last_completion_metadata = {}
 
     def complete(self, prompt, max_new_tokens, **kwargs):
-        self.prompts.append(prompt)
         if not getattr(self, "last_completion_metadata", None):
             self.last_completion_metadata = {}
         if not self.outputs:
-            raise RuntimeError("fake model ran out of outputs")
+            raise ModelExhaustedError("model outputs exhausted")
+        self.prompts.append(prompt)
         return self.outputs.pop(0)
 
 

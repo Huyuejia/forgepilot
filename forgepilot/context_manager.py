@@ -25,8 +25,22 @@ DEFAULT_SECTION_FLOORS = {
 }
 # 当 prompt 超预算时，会优先压缩这些 section。
 DEFAULT_REDUCTION_ORDER = ("relevant_memory", "history", "memory", "prefix")
-SECTION_ORDER = ("prefix", "memory", "relevant_memory", "history", "current_request")
+BASE_SECTION_ORDER = ("prefix", "memory", "relevant_memory", "history", "current_request")
+PROTECTED_CONTRACT_SECTION = "protected_contract"
 CURRENT_REQUEST_SECTION = "current_request"
+SECTION_ORDER = BASE_SECTION_ORDER
+
+
+class ProtectedContractBudgetError(ValueError):
+    code = "contract_projection_too_large"
+
+    def __init__(self, protected_chars, request_chars, total_budget):
+        self.protected_chars = int(protected_chars)
+        self.request_chars = int(request_chars)
+        self.total_budget = int(total_budget)
+        super().__init__(
+            "protected Contract plus current request exceeds the hard context budget"
+        )
 RELEVANT_MEMORY_LIMIT = 3
 
 
@@ -111,6 +125,16 @@ class ContextManager:
             "history": "",
             CURRENT_REQUEST_SECTION: f"Current user request:\n{user_message}",
         }
+        protected_renderer = getattr(self.agent, "protected_contract_text", None)
+        protected_text = str(protected_renderer() or "").strip() if callable(protected_renderer) else ""
+        if protected_text:
+            section_texts[PROTECTED_CONTRACT_SECTION] = protected_text
+        if protected_text and len(protected_text) + len(section_texts[CURRENT_REQUEST_SECTION]) > self.total_budget:
+            raise ProtectedContractBudgetError(
+                len(protected_text),
+                len(section_texts[CURRENT_REQUEST_SECTION]),
+                self.total_budget,
+            )
         checkpoint_text = ""
         if hasattr(self.agent, "render_checkpoint_text"):
             checkpoint_text = str(self.agent.render_checkpoint_text() or "").strip()
@@ -195,7 +219,7 @@ class ContextManager:
         relevant_raw = "\n".join(relevant_lines)
         history = list(getattr(self.agent, "session", {}).get("history", []))
         history_raw = self._raw_history_text(history)
-        return {
+        rendered = {
             "prefix": SectionRender(raw=section_texts["prefix"], budget=len(section_texts["prefix"]), rendered=section_texts["prefix"], details={}),
             "memory": SectionRender(raw=section_texts["memory"], budget=len(section_texts["memory"]), rendered=section_texts["memory"], details={}),
             "relevant_memory": SectionRender(
@@ -218,6 +242,24 @@ class ContextManager:
                 details={},
             ),
         }
+        if PROTECTED_CONTRACT_SECTION in section_texts:
+            protected = section_texts[PROTECTED_CONTRACT_SECTION]
+            rendered[PROTECTED_CONTRACT_SECTION] = SectionRender(
+                raw=protected, budget=len(protected), rendered=protected, details={"protected": True}
+            )
+        return {section: rendered[section] for section in self._section_order(section_texts)}
+
+    def _section_order(self, section_texts):
+        if PROTECTED_CONTRACT_SECTION in section_texts:
+            return (
+                "prefix",
+                PROTECTED_CONTRACT_SECTION,
+                "memory",
+                "relevant_memory",
+                "history",
+                CURRENT_REQUEST_SECTION,
+            )
+        return BASE_SECTION_ORDER
 
     def _compute_section_floors(self):
         floors = {
@@ -229,7 +271,7 @@ class ContextManager:
 
     def _render_sections(self, section_texts, budgets, selected_notes=None):
         rendered = {}
-        for section in SECTION_ORDER:
+        for section in self._section_order(section_texts):
             budget = budgets.get(section)
             if section == CURRENT_REQUEST_SECTION:
                 raw = section_texts[section]
@@ -238,6 +280,11 @@ class ContextManager:
                 rendered[section] = self._render_relevant_memory(selected_notes or [], int(budget or 0))
             elif section == "history":
                 rendered[section] = self._render_history_section(int(budget or 0))
+            elif section == PROTECTED_CONTRACT_SECTION:
+                raw = section_texts[section]
+                rendered[section] = SectionRender(
+                    raw=raw, budget=len(raw), rendered=raw, details={"protected": True}
+                )
             else:
                 raw = section_texts[section]
                 rendered_text = _tail_clip(raw, int(budget)) if budget is not None else raw
@@ -449,20 +496,20 @@ class ContextManager:
         # 顺序是刻意设计的：稳定规则放前面，最新请求放最后。
         return "\n\n".join(
             [
-                rendered["prefix"].rendered,
-                rendered["memory"].rendered,
-                rendered["relevant_memory"].rendered,
-                rendered["history"].rendered,
-                rendered[CURRENT_REQUEST_SECTION].rendered,
+                rendered[section].rendered
+                for section in self._section_order(rendered)
             ]
         ).strip()
 
     def _metadata(self, prompt, rendered, budgets, reduction_log, selected_notes, user_message, section_texts):
         section_metadata = {}
-        for section in SECTION_ORDER[:-1]:
+        section_order = self._section_order(rendered)
+        for section in section_order[:-1]:
             section_metadata[section] = {
                 "raw_chars": rendered[section].raw_chars,
-                "budget_chars": int(budgets.get(section, 0)),
+                "budget_chars": (
+                    None if section == PROTECTED_CONTRACT_SECTION else int(budgets.get(section, 0))
+                ),
                 "rendered_chars": rendered[section].rendered_chars,
             }
         section_metadata[CURRENT_REQUEST_SECTION] = {
@@ -474,10 +521,14 @@ class ContextManager:
             "prompt_chars": len(prompt),
             "prompt_budget_chars": self.total_budget,
             "prompt_over_budget": len(prompt) > self.total_budget,
-            "section_order": list(SECTION_ORDER),
+            "section_order": list(section_order),
             "section_budgets": {
-                section: (None if section == CURRENT_REQUEST_SECTION else int(budgets.get(section, 0)))
-                for section in SECTION_ORDER
+                section: (
+                    None
+                    if section in {CURRENT_REQUEST_SECTION, PROTECTED_CONTRACT_SECTION}
+                    else int(budgets.get(section, 0))
+                )
+                for section in section_order
             },
             "sections": section_metadata,
             "budget_reductions": reduction_log,

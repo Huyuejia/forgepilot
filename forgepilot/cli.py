@@ -39,7 +39,7 @@ WELCOME_ART = (
     "       /   ^   \\\\",
     "      /|       |\\\\",
 )
-WELCOME_NAME = "forgepilot"  # 代理名称
+WELCOME_NAME = "ForgePilot"  # 代理名称
 WELCOME_SUBTITLE = "local coding agent"  # 代理副标题
 WELCOME_STATUS = "calm shell, ready for work"  # 状态描述
 HELP_DETAILS = textwrap.dedent(  # 使用 textwrap.dedent 自动去除多行字符串前面的缩进，保持格式整洁
@@ -238,7 +238,7 @@ def build_agent(args):
 def build_arg_parser():
     parser = argparse.ArgumentParser(  # 创建解析对象
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,  # 自动在帮助文档里显示默认值
-        description="Minimal coding agent for Ollama, OpenAI-compatible, Anthropic-compatible, or DeepSeek models.",
+        description="ForgePilot local coding agent for Ollama, OpenAI-compatible, Anthropic-compatible, or DeepSeek models.",
     )
     parser.add_argument("prompt", nargs="*", help="Optional one-shot prompt.")  # 位置参数：任务描述
     parser.add_argument("--cwd", default=".", help="Workspace directory.")  # 参数：指定工作目录
