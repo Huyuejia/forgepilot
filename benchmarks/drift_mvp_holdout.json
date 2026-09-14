@@ -1,0 +1,14 @@
+{
+  "manifest_version": 1,
+  "benchmark": "benchmarks/drift_mvp.json",
+  "benchmark_sha256": "b4edce17e544314dff7201d5bfb5724d4734c077ae727f86e106e8ff65008443",
+  "assignment": "fixed-before-treatment",
+  "task_ids": [
+    "drift_03_holdout",
+    "drift_06_holdout",
+    "drift_09_holdout",
+    "drift_12_holdout"
+  ],
+  "holdout_preassigned": true,
+  "outcome_dependent_tuning": false
+}

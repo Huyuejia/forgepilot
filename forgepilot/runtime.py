@@ -17,9 +17,13 @@ from pathlib import Path
 
 from . import memory as memorylib
 from . import planner
-from .context_manager import ContextManager
+from .adjudication import ActionCandidate, CompletionCandidate, admit_action, evaluate_completion
+from .context_manager import ContextManager, ProtectedContractBudgetError
+from .evidence import EvidenceLedger, ToolObservation
 from .run_store import RunStore
 from .task_state import TaskState
+from .task_contract import ContractValidationError, TaskContract
+from .models import ModelExhaustedError
 from . import tools as toolkit
 from .workspace import IGNORED_PATH_NAMES, MAX_HISTORY, WorkspaceContext, clip, now
 
@@ -38,6 +42,8 @@ CHECKPOINT_FULL_VALID_STATUS = "full-valid"
 CHECKPOINT_PARTIAL_STALE_STATUS = "partial-stale"
 CHECKPOINT_WORKSPACE_MISMATCH_STATUS = "workspace-mismatch"
 CHECKPOINT_SCHEMA_MISMATCH_STATUS = "schema-mismatch"
+COMPATIBILITY_MODE = "compatibility"
+ENHANCED_CONTRACT_MODE = "enhanced_contract"
 DURABLE_MEMORY_INTENT_PATTERN = re.compile(r"(?i)\b(capture|remember|save|store|persist|note)\b")
 DURABLE_MEMORY_INTENT_ZH_PATTERN = re.compile(r"(记住|保存|记录|沉淀|长期记忆|持久记忆)")
 DURABLE_MEMORY_LINE_PATTERNS = (
@@ -51,6 +57,28 @@ DURABLE_MEMORY_LINE_PATTERNS = (
     ("user-preferences", re.compile(r"^偏好：\s*(.+)$")),
 )
 SECRET_SHAPED_TEXT_PATTERN = re.compile(r"(?i)(\b(api[_ -]?key|token|secret|password)\b|sk-[A-Za-z0-9_-]{6,})")
+
+
+def _legacy_contract_validation_code(error):
+    """Map known legacy validator ValueErrors to stable activation codes."""
+    message = str(error).lower()
+    if "schema_version" in message:
+        return "unsupported_schema_version"
+    if "target_path" in message:
+        return "invalid_target_path"
+    if "completion_condition" in message:
+        return "invalid_completion_condition"
+    if "must_items" in message:
+        return "invalid_must_items"
+    if "allowed_tools" in message:
+        return "unsupported_tool"
+    if "provenance" in message:
+        return "missing_provenance"
+    if "workspace_scope" in message:
+        return "invalid_workspace_scope"
+    if "task contract" in message:
+        return "invalid_contract_shape"
+    return "legacy_contract_validation_error"
 
 
 @dataclass
@@ -146,6 +174,14 @@ class ForgePilot:
         self.last_durable_rejections = []
         self.last_durable_superseded = []
         self._last_tool_result_metadata = {}
+        self.execution_mode = None
+        self.active_contract = None
+        self.contract_activation = {}
+        self.last_activation_failure = {}
+        self._action_candidate_sequence = 0
+        self._completion_candidate_sequence = 0
+        self._observation_sequence = 0
+        self.evidence_ledger = None
         self._last_prefix_refresh = {
             "workspace_changed": False,
             "prefix_changed": False,
@@ -574,13 +610,26 @@ class ForgePilot:
                 "stale_summary_invalidations": int(self.resume_state.get("stale_summary_invalidations", 0)),
                 "stale_paths": list(self.resume_state.get("stale_paths", [])),
                 "runtime_identity_mismatch_fields": list(self.resume_state.get("runtime_identity_mismatch_fields", [])),
+                "execution_mode": self.execution_mode,
             }
         )
+        if self.execution_mode == ENHANCED_CONTRACT_MODE and self.active_contract is not None:
+            metadata.update(
+                {
+                    "contract_version": self.active_contract.contract_version,
+                    "contract_projection_digest": self.protected_contract_projection_digest(),
+                }
+            )
         metadata.update(self.detected_secret_env_summary())
         return prompt, metadata
 
     def emit_trace(self, task_state, event, payload=None):
         payload = self.redact_artifact(payload or {})
+        payload.setdefault("task_id", task_state.task_id)
+        if self.execution_mode:
+            payload.setdefault("execution_mode", self.execution_mode)
+        if self.active_contract is not None:
+            payload.setdefault("contract_version", self.active_contract.contract_version)
         payload["event"] = event
         payload["created_at"] = now()
         # trace 是运行中的逐事件时间线，适合回答“这一轮 agent 到底做了什么”。
@@ -637,7 +686,16 @@ class ForgePilot:
             "schema_version": CHECKPOINT_SCHEMA_VERSION,
             "created_at": now(),
             "current_goal": str(user_message),
-            "completed": [task_state.final_answer] if task_state.final_answer else [],
+            "execution_mode": task_state.execution_mode or self.execution_mode or COMPATIBILITY_MODE,
+            "completion_assurance": task_state.completion_assurance,
+            "contract_summary": dict(task_state.contract_summary),
+            "completion_candidate": dict(task_state.completion_candidate),
+            "current_evidence_summary": dict(task_state.current_evidence_summary),
+            "condition_coverage": dict(task_state.condition_coverage),
+            "completion_verdict": dict(task_state.completion_verdict),
+            "completed": [task_state.final_answer]
+            if task_state.completion_assurance == "verified" and task_state.final_answer
+            else [],
             "excluded": [],
             "current_blocker": "" if str(task_state.stop_reason or "") in ("", "final_answer_returned") else str(task_state.stop_reason),
             "next_step": self.infer_next_step(task_state),
@@ -776,7 +834,157 @@ class ForgePilot:
         self.last_durable_superseded = superseded
         return promoted, rejections, superseded
 
-    def ask(self, user_message):
+    def protected_contract_text(self):
+        contract = self.active_contract
+        if self.execution_mode != ENHANCED_CONTRACT_MODE or contract is None:
+            return ""
+        condition = contract.completion_conditions[0]
+        return "\n".join(
+            [
+                "Protected Current Task Contract:",
+                f"contract_id: {contract.contract_id}",
+                f"contract_version: {contract.contract_version}",
+                f"goal: {contract.goal}",
+                f"workspace_scope: {contract.workspace_scope}",
+                f"target_path: {contract.target_path}",
+                f"expected_content_basis: {condition.kind}",
+                f"expected_content: {json.dumps(contract.expected_content, ensure_ascii=False)}",
+                f"expected_sha256: {condition.expected_sha256}",
+                f"expected_size: {condition.expected_size}",
+                f"condition_id: {condition.condition_id}",
+                f"allowed_tools: {', '.join(contract.allowed_tools)}",
+                f"prohibitions: {', '.join(contract.prohibitions)}",
+            ]
+        )
+
+    def protected_contract_projection_digest(self):
+        text = self.protected_contract_text()
+        return hashlib.sha256(text.encode("utf-8")).hexdigest() if text else ""
+
+    def _activate_contract(self, task_state, task_contract):
+        if self.execution_mode == COMPATIBILITY_MODE:
+            self.contract_activation = {
+                "mode": COMPATIBILITY_MODE,
+                "status": "not_requested",
+            }
+            self.emit_trace(
+                task_state,
+                "execution_mode_selected",
+                {"execution_mode": COMPATIBILITY_MODE},
+            )
+            return None
+
+        self.emit_trace(
+            task_state,
+            "execution_mode_selected",
+            {"execution_mode": ENHANCED_CONTRACT_MODE},
+        )
+        try:
+            contract = TaskContract.from_mapping(task_contract, task_id=task_state.task_id)
+        except ContractValidationError as exc:
+            failure = {
+                "mode": ENHANCED_CONTRACT_MODE,
+                "code": "contract_validation_failed",
+                "validation_code": exc.code,
+                "message": str(exc),
+            }
+            self.contract_activation = {
+                "mode": ENHANCED_CONTRACT_MODE,
+                "status": "failed",
+                "failure_code": failure["code"],
+                "validation_code": failure["validation_code"],
+            }
+            return failure
+        except ValueError as exc:
+            failure = {
+                "mode": ENHANCED_CONTRACT_MODE,
+                "code": "contract_validation_failed",
+                "validation_code": _legacy_contract_validation_code(exc),
+                "message": str(exc),
+            }
+            self.contract_activation = {
+                "mode": ENHANCED_CONTRACT_MODE,
+                "status": "failed",
+                "failure_code": failure["code"],
+                "validation_code": failure["validation_code"],
+            }
+            return failure
+
+        if contract.execution_not_ready:
+            failure = {
+                "mode": ENHANCED_CONTRACT_MODE,
+                "code": "contract_not_execution_ready",
+                "reason_code": "contract_not_execution_ready",
+                "execution_not_ready": True,
+                "lifecycle_state": contract.lifecycle_state,
+            }
+            self.contract_activation = {
+                "mode": ENHANCED_CONTRACT_MODE,
+                "status": "failed",
+                "failure_code": failure["code"],
+                "execution_not_ready": True,
+                "lifecycle_state": contract.lifecycle_state,
+            }
+            return failure
+
+        self.active_contract = contract
+        self.evidence_ledger = EvidenceLedger(contract)
+        task_state.contract_summary = contract.summary()
+        self.contract_activation = {
+            "mode": ENHANCED_CONTRACT_MODE,
+            "status": "active",
+            "contract_id": contract.contract_id,
+            "contract_version": contract.contract_version,
+            "task_id": contract.task_id,
+            "lifecycle_state": contract.lifecycle_state,
+            "execution_not_ready": contract.execution_not_ready,
+            "projection_digest": self.protected_contract_projection_digest(),
+        }
+        self.emit_trace(
+            task_state,
+            "contract_activated",
+            {
+                "execution_mode": ENHANCED_CONTRACT_MODE,
+                "task_id": task_state.task_id,
+                "contract_id": contract.contract_id,
+                "contract_version": contract.contract_version,
+                "contract": contract.summary(),
+                "projection_digest": self.contract_activation["projection_digest"],
+            },
+        )
+        return None
+
+    def _finish_pre_model_failure(self, task_state, failure, result_prefix):
+        self.last_activation_failure = dict(failure)
+        if self.execution_mode == ENHANCED_CONTRACT_MODE:
+            task_state.completion_assurance = "enhanced_non_success"
+        if failure.get("code") == "contract_not_execution_ready":
+            task_state.completion_verdict = {
+                "result": "contract_blocked",
+                "candidate_id": "",
+                "covered_condition_ids": [],
+                "unmet_condition_ids": [],
+                "evidence_ids": [],
+                "reason_code": "contract_not_execution_ready",
+            }
+        task_state.stop("contract_activation_failed", status="failed")
+        self.run_store.write_task_state(task_state)
+        event = "contract_projection_failed" if result_prefix == "contract_projection_failed" else "contract_activation_failed"
+        self.emit_trace(task_state, event, dict(failure))
+        self.emit_trace(
+            task_state,
+            "run_finished",
+            {
+                "status": task_state.status,
+                "stop_reason": task_state.stop_reason,
+                "execution_mode": self.execution_mode,
+            },
+        )
+        self.run_store.write_report(task_state, self.redact_artifact(self.build_report(task_state)))
+        code = str(failure.get("code", "unknown_failure"))
+        return f"{result_prefix}:{code}"
+
+    def ask(self, user_message, *, task_contract=None):
         """执行一次完整的 agent 回合，直到产出最终答案或命中停止条件。
 
         为什么存在：
@@ -797,11 +1005,24 @@ class ForgePilot:
         这里就是最关键的入口。
         """
         run_started_at = time.monotonic()
+        self.execution_mode = (
+            ENHANCED_CONTRACT_MODE if task_contract is not None else COMPATIBILITY_MODE
+        )
+        self.active_contract = None
+        self.evidence_ledger = None
+        self._completion_candidate_sequence = 0
+        self._observation_sequence = 0
+        self.contract_activation = {"mode": self.execution_mode, "status": "pending"}
+        self.last_activation_failure = {}
         self.memory.set_task_summary(user_message)
         self.record({"role": "user", "content": user_message, "created_at": now()})
 
         task_state = TaskState.create(run_id=self.new_run_id(), task_id=self.new_task_id(), user_request=user_message)
         task_state.resume_status = self.resume_state.get("status", CHECKPOINT_NONE_STATUS)
+        task_state.execution_mode = self.execution_mode
+        task_state.completion_assurance = (
+            "legacy_unverified" if self.execution_mode == COMPATIBILITY_MODE else "enhanced_unverified"
+        )
         self.current_task_state = task_state
         self.current_run_dir = self.run_store.start_run(task_state)
         self.emit_trace(
@@ -810,8 +1031,15 @@ class ForgePilot:
             {
                 "task_id": task_state.task_id,
                 "user_request": clip(user_message, 300),
+                "execution_mode": self.execution_mode,
             },
         )
+
+        activation_failure = self._activate_contract(task_state, task_contract)
+        if activation_failure is not None:
+            return self._finish_pre_model_failure(
+                task_state, activation_failure, "contract_activation_failed"
+            )
 
         tool_steps = 0
         attempts = 0
@@ -828,7 +1056,21 @@ class ForgePilot:
             task_state.record_attempt()
             self.run_store.write_task_state(task_state)
             prompt_started_at = time.monotonic()
-            prompt, prompt_metadata = self._build_prompt_and_metadata(user_message)
+            try:
+                prompt, prompt_metadata = self._build_prompt_and_metadata(user_message)
+            except ProtectedContractBudgetError as exc:
+                failure = {
+                    "mode": self.execution_mode,
+                    "code": exc.code,
+                    "contract_version": getattr(self.active_contract, "contract_version", ""),
+                    "projection_digest": self.protected_contract_projection_digest(),
+                    "protected_chars": exc.protected_chars,
+                    "request_chars": exc.request_chars,
+                    "total_budget": exc.total_budget,
+                }
+                return self._finish_pre_model_failure(
+                    task_state, failure, "contract_projection_failed"
+                )
             self.emit_trace(
                 task_state,
                 "prompt_built",
@@ -893,12 +1135,80 @@ class ForgePilot:
                 prompt_cache_key = prompt_metadata.get("prompt_cache_key")
                 prompt_cache_retention = "in_memory"
             model_started_at = time.monotonic()
-            raw = self.model_client.complete(
-                prompt,
-                self.max_new_tokens,
-                prompt_cache_key=prompt_cache_key,
-                prompt_cache_retention=prompt_cache_retention,
-            )
+            try:
+                raw = self.model_client.complete(
+                    prompt,
+                    self.max_new_tokens,
+                    prompt_cache_key=prompt_cache_key,
+                    prompt_cache_retention=prompt_cache_retention,
+                )
+            except ModelExhaustedError:
+                if (
+                    self.execution_mode == ENHANCED_CONTRACT_MODE
+                    and task_state.completion_candidate
+                ):
+                    task_state.completion_assurance = "enhanced_non_success"
+                    task_state.stop("evidence_insufficient", status="stopped")
+                    fallback_candidate = str(task_state.completion_candidate.get("text", ""))
+                    self.record({"role": "completion_candidate", "content": fallback_candidate, "created_at": now()})
+                    self.run_store.write_task_state(task_state)
+                    checkpoint = self.create_checkpoint(
+                        task_state, user_message, trigger="evidence_insufficient"
+                    )
+                    self.emit_trace(
+                        task_state,
+                        "run_finished",
+                        {
+                            "status": task_state.status,
+                            "stop_reason": task_state.stop_reason,
+                            "execution_mode": self.execution_mode,
+                        },
+                    )
+                    self.run_store.write_report(
+                        task_state, self.redact_artifact(self.build_report(task_state))
+                    )
+                    return fallback_candidate
+                task_state.completion_assurance = (
+                    "legacy_unverified"
+                    if self.execution_mode == COMPATIBILITY_MODE
+                    else "enhanced_non_success"
+                )
+                task_state.stop_model_error()
+                self.run_store.write_task_state(task_state)
+                self.emit_trace(
+                    task_state,
+                    "run_failed",
+                    {
+                        "status": task_state.status,
+                        "stop_reason": task_state.stop_reason,
+                        "execution_mode": self.execution_mode,
+                    },
+                )
+                self.run_store.write_report(
+                    task_state, self.redact_artifact(self.build_report(task_state))
+                )
+                raise
+            except Exception:
+                task_state.completion_assurance = (
+                    "legacy_unverified"
+                    if self.execution_mode == COMPATIBILITY_MODE
+                    else "enhanced_non_success"
+                )
+                task_state.stop_model_error()
+                self.run_store.write_task_state(task_state)
+                self.emit_trace(
+                    task_state,
+                    "run_failed",
+                    {
+                        "status": task_state.status,
+                        "stop_reason": task_state.stop_reason,
+                        "execution_mode": self.execution_mode,
+                    },
+                )
+                self.run_store.write_report(
+                    task_state, self.redact_artifact(self.build_report(task_state))
+                )
+                raise
             completion_metadata = dict(getattr(self.model_client, "last_completion_metadata", {}) or {})
             if completion_metadata:
                 # 把后端返回的 usage/cache 统计并回 prompt_metadata，
@@ -934,25 +1244,32 @@ class ForgePilot:
                     }
                 )
                 self.run_store.write_task_state(task_state)
+                tool_metadata = dict(self._last_tool_result_metadata or {})
+                if tool_metadata.get("admission_decision") == "blocked":
+                    tool_event = "task_admission_blocked"
+                elif not tool_metadata.get("execution_attempted", False):
+                    tool_event = "tool_safety_rejected"
+                else:
+                    tool_event = "tool_executed"
                 self.emit_trace(
                     task_state,
-                    "tool_executed",
+                    tool_event,
                     {
                         "name": name,
                         "args": args,
                         "result": clip(result, 500),
                         "duration_ms": int((time.monotonic() - tool_started_at) * 1000),
-                        **dict(self._last_tool_result_metadata or {}),
+                        **tool_metadata,
                     },
                 )
-                checkpoint = self.create_checkpoint(task_state, user_message, trigger="tool_executed")
+                checkpoint = self.create_checkpoint(task_state, user_message, trigger=tool_event)
                 self.run_store.write_task_state(task_state)
                 self.emit_trace(
                     task_state,
                     "checkpoint_created",
                     {
                         "checkpoint_id": checkpoint["checkpoint_id"],
-                        "trigger": "tool_executed",
+                        "trigger": tool_event,
                     },
                 )
                 continue
@@ -963,6 +1280,72 @@ class ForgePilot:
                 continue
 
             final = (payload or raw).strip()
+            if self.execution_mode == ENHANCED_CONTRACT_MODE:
+                candidate = CompletionCandidate(
+                    candidate_id=self._next_completion_candidate_id(),
+                    text=final,
+                )
+                task_state.completion_candidate = {
+                    "candidate_id": candidate.candidate_id,
+                    "text": candidate.text,
+                }
+                self.emit_trace(
+                    task_state,
+                    "completion_candidate_received",
+                    {
+                        "execution_mode": self.execution_mode,
+                        "task_id": task_state.task_id,
+                        "contract_version": self.active_contract.contract_version,
+                        "candidate_id": candidate.candidate_id,
+                    },
+                )
+                verdict = evaluate_completion(self.active_contract, self.evidence_ledger, candidate)
+                verdict_data = {
+                    "result": verdict.result,
+                    "candidate_id": verdict.candidate_id,
+                    "covered_condition_ids": list(verdict.covered_condition_ids),
+                    "unmet_condition_ids": list(verdict.unmet_condition_ids),
+                    "evidence_ids": list(verdict.evidence_ids),
+                    "reason_code": verdict.reason_code,
+                }
+                task_state.completion_verdict = verdict_data
+                task_state.completion_assurance = (
+                    "verified" if verdict.result == "verified_completed" else "enhanced_non_success"
+                )
+                self.emit_trace(task_state, "completion_coverage_evaluated", {
+                    "execution_mode": self.execution_mode,
+                    "task_id": task_state.task_id,
+                    "contract_version": self.active_contract.contract_version,
+                    "candidate_id": verdict.candidate_id,
+                    "covered_condition_ids": list(verdict.covered_condition_ids),
+                    "unmet_condition_ids": list(verdict.unmet_condition_ids),
+                    "evidence_ids": list(verdict.evidence_ids),
+                })
+                self.emit_trace(
+                    task_state,
+                    "completion_verdict_decided",
+                    {
+                        "execution_mode": self.execution_mode,
+                        "task_id": task_state.task_id,
+                        "contract_version": self.active_contract.contract_version,
+                        **verdict_data,
+                    },
+                )
+                if verdict.result != "verified_completed":
+                    unmet = ", ".join(verdict.unmet_condition_ids) or "none"
+                    feedback = (
+                        f"Completion verdict: {verdict.result}; unmet conditions: {unmet}. "
+                        "Obtain current verified Evidence before claiming completion."
+                    )
+                    self.record({
+                        "role": "completion_feedback",
+                        "content": feedback,
+                        "created_at": now(),
+                    })
+                    self.run_store.write_task_state(task_state)
+                    continue
+            else:
+                task_state.completion_assurance = "legacy_unverified"
             self.record({"role": "assistant", "content": final, "created_at": now()})
             task_state.finish_success(final)
             self.promote_durable_memory(user_message, final)
@@ -989,14 +1372,30 @@ class ForgePilot:
             self.run_store.write_report(task_state, self.redact_artifact(self.build_report(task_state)))
             return final
 
-        if attempts >= max_attempts and tool_steps < self.max_steps:
+        enhanced_non_success = self.execution_mode == ENHANCED_CONTRACT_MODE
+        if enhanced_non_success and task_state.completion_verdict:
+            result_code = str(task_state.completion_verdict.get("result", "evidence_insufficient"))
+            unmet = task_state.completion_verdict.get("unmet_condition_ids", [])
+            final = f"{result_code}:{','.join(str(item) for item in unmet) or 'none'}"
+            task_state.completion_assurance = "enhanced_non_success"
+            task_state.stop(result_code, status="stopped")
+        elif attempts >= max_attempts and tool_steps < self.max_steps:
             final = "Stopped after too many malformed model responses without a valid tool call or final answer."
-            task_state.stop_retry_limit(final)
+            if enhanced_non_success:
+                task_state.completion_assurance = "enhanced_non_success"
+                task_state.stop_retry_limit()
+            else:
+                task_state.stop_retry_limit(final)
         else:
             final = "Stopped after reaching the step limit without a final answer."
-            task_state.stop_step_limit(final)
-        self.record({"role": "assistant", "content": final, "created_at": now()})
-        self.promote_durable_memory(user_message, final)
+            if enhanced_non_success:
+                task_state.completion_assurance = "enhanced_non_success"
+                task_state.stop_step_limit()
+            else:
+                task_state.stop_step_limit(final)
+        self.record({"role": "stop_notice" if enhanced_non_success else "assistant", "content": final, "created_at": now()})
+        if not enhanced_non_success:
+            self.promote_durable_memory(user_message, final)
         self.run_store.write_task_state(task_state)
         checkpoint = self.create_checkpoint(task_state, user_message, trigger=task_state.stop_reason or "run_stopped")
         self.emit_trace(
@@ -1020,7 +1419,270 @@ class ForgePilot:
         self.run_store.write_report(task_state, self.redact_artifact(self.build_report(task_state)))
         return final
 
+    def _next_action_candidate_id(self):
+        self._action_candidate_sequence += 1
+        return f"candidate-{self._action_candidate_sequence:04d}"
+
+    def _next_completion_candidate_id(self):
+        self._completion_candidate_sequence += 1
+        return f"completion-{self._completion_candidate_sequence:04d}"
+
+    def _capture_contract_target_state(self, target_path):
+        try:
+            path = self.path(target_path)
+            if not path.is_file():
+                return {"exists": False, "sha256": "", "size": 0}
+            content = path.read_bytes()
+            return {
+                "exists": True,
+                "sha256": hashlib.sha256(content).hexdigest(),
+                "size": len(content),
+            }
+        except (OSError, ValueError):
+            return {"exists": False, "sha256": "", "size": 0}
+
+    @staticmethod
+    def _evidence_record_summary(record):
+        if record is None:
+            return {}
+        return {
+            "evidence_id": record.evidence_id,
+            "observation_id": record.observation_id,
+            "condition_id": record.condition_id,
+            "eligible": record.eligible,
+            "verified": record.verified,
+            "match": record.match,
+            "freshness": record.freshness,
+            "target_revision": record.target_revision,
+            "reason_code": record.reason_code,
+            "resolves_observation_ids": list(record.resolves_observation_ids),
+        }
+
+    def _refresh_task_evidence_summary(self, record=None):
+        if self.current_task_state is None or self.evidence_ledger is None:
+            return
+        current = self.evidence_ledger.current_evidence()
+        self.current_task_state.current_evidence_summary = self._evidence_record_summary(current)
+        self.current_task_state.condition_coverage = {
+            self.active_contract.completion_conditions[0].condition_id: {
+                "covered": current is not None,
+                "evidence_id": current.evidence_id if current else "",
+                "target_revision": current.target_revision if current else self.evidence_ledger.target_revision,
+                "unmet_reason": "" if current else "current_evidence_insufficient",
+            }
+        }
+
+    def _record_enhanced_observation(self, candidate, before_state, after_state):
+        if self.evidence_ledger is None or self.active_contract is None:
+            return None
+        if candidate.tool_name not in {"read_file", "write_file", "patch_file"}:
+            return None
+        if (
+            candidate.tool_name == "read_file"
+            and candidate.arguments.get("path") != self.active_contract.target_path
+        ):
+            return None
+        metadata = dict(self._last_tool_result_metadata or {})
+        if not metadata.get("execution_attempted"):
+            return None
+        status = {
+            "ok": "success",
+            "partial_success": "partial",
+            "error": "error",
+        }.get(str(metadata.get("tool_status", "")), str(metadata.get("tool_status", "error")))
+        self._observation_sequence += 1
+        observation = ToolObservation(
+            observation_id=f"observation-{self._observation_sequence:04d}",
+            task_id=self.active_contract.task_id,
+            contract_version=self.active_contract.contract_version,
+            candidate_id=candidate.candidate_id,
+            tool_name=candidate.tool_name,
+            status=status,
+            execution_attempted=True,
+            target_path=self.active_contract.target_path,
+            target_exists=after_state["exists"],
+            target_sha256=after_state["sha256"],
+            target_size=after_state["size"],
+            target_revision=self.evidence_ledger.target_revision,
+            target_before_exists=before_state["exists"],
+            target_before_sha256=before_state["sha256"],
+            target_before_size=before_state["size"],
+        )
+        previous_revision = self.evidence_ledger.target_revision
+        record = self.evidence_ledger.record(observation)
+        metadata["observation_id"] = observation.observation_id
+        metadata["evidence_id"] = record.evidence_id
+        metadata["target_revision"] = record.target_revision
+        self._last_tool_result_metadata.update(metadata)
+        self._refresh_task_evidence_summary(record)
+        if self.current_task_state is not None:
+            self.emit_trace(
+                self.current_task_state,
+                "environment_observed",
+                {
+                    "execution_mode": self.execution_mode,
+                    "task_id": observation.task_id,
+                    "observation_id": observation.observation_id,
+                    "candidate_id": observation.candidate_id,
+                    "contract_version": observation.contract_version,
+                    "target_path": observation.target_path,
+                    "target_before_exists": observation.target_before_exists,
+                    "target_before_sha256": observation.target_before_sha256,
+                    "target_before_size": observation.target_before_size,
+                    "target_exists": observation.target_exists,
+                    "target_sha256": observation.target_sha256,
+                    "target_size": observation.target_size,
+                    "target_revision": record.target_revision,
+                    "status": observation.status,
+                },
+            )
+            self.emit_trace(
+                self.current_task_state,
+                "evidence_recorded",
+                {
+                    "execution_mode": self.execution_mode,
+                    "task_id": self.current_task_state.task_id,
+                    "contract_version": self.active_contract.contract_version,
+                    "evidence_id": record.evidence_id,
+                    "observation_id": record.observation_id,
+                    "condition_id": record.condition_id,
+                    "match": record.match,
+                    "eligible": record.eligible,
+                    "verified": record.verified,
+                    "freshness": record.freshness,
+                    "target_revision": record.target_revision,
+                    "reason_code": record.reason_code,
+                },
+            )
+            if record.target_revision != previous_revision or record.resolves_observation_ids:
+                self.emit_trace(
+                    self.current_task_state,
+                    "evidence_superseded_or_resolved",
+                    {
+                        "execution_mode": self.execution_mode,
+                        "task_id": self.current_task_state.task_id,
+                        "contract_version": self.active_contract.contract_version,
+                        "evidence_id": record.evidence_id,
+                        "observation_id": record.observation_id,
+                        "target_revision": record.target_revision,
+                        "resolves_observation_ids": list(record.resolves_observation_ids),
+                    },
+                )
+        return record
+
+    def _reject_task_admission(self, name, reason_code, constraint_id="", normalized_path=""):
+        tool = self.tools.get(name)
+        self._last_tool_result_metadata = {
+            "tool_status": "rejected",
+            "tool_error_code": f"task_admission_{reason_code}",
+            "admission_decision": "blocked",
+            "admission_reason_code": reason_code,
+            "admission_constraint_id": constraint_id,
+            "normalized_path": normalized_path,
+            "execution_attempted": False,
+            "execution_mode": self.execution_mode,
+            "task_id": self.current_task_state.task_id if self.current_task_state is not None else "",
+            "contract_version": getattr(self.active_contract, "contract_version", ""),
+            "security_event_type": "",
+            "risk_level": "high" if tool and tool["risky"] else "low",
+            "read_only": bool(tool) and not tool["risky"],
+            "affected_paths": [],
+            "workspace_changed": False,
+            "diff_summary": [],
+        }
+        if self.current_task_state is not None:
+            self.emit_trace(
+                self.current_task_state,
+                "task_admission_decided",
+                {
+                    "execution_mode": self.execution_mode,
+                    "task_id": self.current_task_state.task_id,
+                    "contract_version": getattr(self.active_contract, "contract_version", ""),
+                    "tool_name": name,
+                    "admission_decision": "blocked",
+                    "reason_code": reason_code,
+                    "constraint_id": constraint_id,
+                    "normalized_path": normalized_path,
+                },
+            )
+        return f"error: task admission blocked: {reason_code}"
+
     def run_tool(self, name, args):
+        """Route a tool candidate through the frozen execution-mode gateway."""
+        args = args or {}
+        candidate = None
+        before_state = None
+        if self.execution_mode == ENHANCED_CONTRACT_MODE:
+            contract = self.active_contract
+            if contract is None or contract.execution_not_ready:
+                return self._reject_task_admission(
+                    name, "contract_not_execution_ready", "execution_ready"
+                )
+            candidate = ActionCandidate(
+                candidate_id=self._next_action_candidate_id(),
+                tool_name=name,
+                arguments=args,
+            )
+            decision = admit_action(contract, candidate)
+            if not decision.admitted:
+                return self._reject_task_admission(
+                    name,
+                    decision.reason_code,
+                    decision.constraint_id,
+                    decision.normalized_path,
+                )
+            before_state = self._capture_contract_target_state(contract.target_path)
+            if self.current_task_state is not None:
+                self.emit_trace(
+                    self.current_task_state,
+                    "task_admission_decided",
+                    {
+                        "execution_mode": self.execution_mode,
+                        "task_id": self.current_task_state.task_id,
+                        "contract_version": contract.contract_version,
+                        "tool_name": name,
+                        "candidate_id": candidate.candidate_id,
+                        "admission_decision": "admitted",
+                        "reason_code": "admitted",
+                    },
+                )
+        result = self._run_tool_with_existing_safety(name, args)
+        metadata = self._last_tool_result_metadata
+        metadata.setdefault(
+            "execution_attempted",
+            metadata.get("tool_status") in {"ok", "partial_success", "error"},
+        )
+        if candidate is not None:
+            metadata.update(
+                {
+                    "admission_decision": "admitted",
+                    "admission_reason_code": "admitted",
+                    "admission_candidate_id": candidate.candidate_id,
+                    "execution_mode": self.execution_mode,
+                    "task_id": self.current_task_state.task_id if self.current_task_state is not None else "",
+                    "contract_version": self.active_contract.contract_version,
+                }
+            )
+            if self.current_task_state is not None:
+                self.emit_trace(
+                    self.current_task_state,
+                    "tool_safety_decided",
+                    {
+                        "execution_mode": self.execution_mode,
+                        "task_id": self.current_task_state.task_id,
+                        "contract_version": self.active_contract.contract_version,
+                        "tool_name": name,
+                        "candidate_id": candidate.candidate_id,
+                        "execution_attempted": bool(metadata.get("execution_attempted")),
+                        "tool_status": metadata.get("tool_status", ""),
+                        "tool_error_code": metadata.get("tool_error_code", ""),
+                    },
+                )
+            after_state = self._capture_contract_target_state(self.active_contract.target_path)
+            self._record_enhanced_observation(candidate, before_state, after_state)
+        return result
+
+    def _run_tool_with_existing_safety(self, name, args):
         """执行一次工具调用，并在执行前后套上完整护栏。
 
         为什么存在：
@@ -1179,6 +1841,15 @@ class ForgePilot:
             "attempts": task_state.attempts,
             "checkpoint_id": task_state.checkpoint_id,
             "resume_status": task_state.resume_status,
+            "execution_mode": self.execution_mode,
+            "completion_assurance": task_state.completion_assurance,
+            "contract_summary": dict(task_state.contract_summary),
+            "completion_candidate": dict(task_state.completion_candidate),
+            "current_evidence_summary": dict(task_state.current_evidence_summary),
+            "condition_coverage": dict(task_state.condition_coverage),
+            "completion_verdict": dict(task_state.completion_verdict),
+            "contract_activation": dict(self.contract_activation),
+            "activation_failure": dict(self.last_activation_failure),
             "task_state": task_state.to_dict(),
             "prompt_metadata": self.last_prompt_metadata,
             "durable_promotions": list(self.last_durable_promotions),

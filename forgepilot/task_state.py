@@ -4,7 +4,7 @@
 这个对象会被不断写入 task_state.json，供运行中观察和运行后复盘。
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from uuid import uuid4
 
@@ -29,6 +29,7 @@ class TaskState:
     run_id: str
     task_id: str
     user_request: str
+    schema_version: str = "phase1-v1"
     status: str = STATUS_RUNNING
     tool_steps: int = 0
     attempts: int = 0
@@ -37,6 +38,13 @@ class TaskState:
     final_answer: str = ""
     checkpoint_id: str = ""
     resume_status: str = ""
+    execution_mode: str = ""
+    completion_assurance: str = "legacy_unverified"
+    contract_summary: dict = field(default_factory=dict)
+    completion_candidate: dict = field(default_factory=dict)
+    current_evidence_summary: dict = field(default_factory=dict)
+    condition_coverage: dict = field(default_factory=dict)
+    completion_verdict: dict = field(default_factory=dict)
 
     @classmethod
     def create(cls, task_id, user_request, run_id=""):
@@ -49,6 +57,7 @@ class TaskState:
         return cls(
             run_id=str(data.get("run_id", "")),
             task_id=str(data.get("task_id", "")),
+            schema_version=str(data.get("schema_version", "phase1-v1")),
             user_request=str(data.get("user_request", "")),
             status=str(data.get("status", STATUS_RUNNING)),
             tool_steps=int(data.get("tool_steps", 0)),
@@ -58,6 +67,13 @@ class TaskState:
             final_answer=str(data.get("final_answer", "")),
             checkpoint_id=str(data.get("checkpoint_id", "")),
             resume_status=str(data.get("resume_status", "")),
+            execution_mode=str(data.get("execution_mode", "")),
+            completion_assurance=str(data.get("completion_assurance", "legacy_unverified")),
+            contract_summary=dict(data.get("contract_summary", {}) or {}),
+            completion_candidate=dict(data.get("completion_candidate", {}) or {}),
+            current_evidence_summary=dict(data.get("current_evidence_summary", {}) or {}),
+            condition_coverage=dict(data.get("condition_coverage", {}) or {}),
+            completion_verdict=dict(data.get("completion_verdict", {}) or {}),
         )
 
     def record_attempt(self):
@@ -96,6 +112,7 @@ class TaskState:
 
     def to_dict(self):
         return {
+            "schema_version": self.schema_version,
             "run_id": self.run_id,
             "task_id": self.task_id,
             "user_request": self.user_request,
@@ -107,4 +124,11 @@ class TaskState:
             "final_answer": self.final_answer,
             "checkpoint_id": self.checkpoint_id,
             "resume_status": self.resume_status,
+            "execution_mode": self.execution_mode,
+            "completion_assurance": self.completion_assurance,
+            "contract_summary": dict(self.contract_summary),
+            "completion_candidate": dict(self.completion_candidate),
+            "current_evidence_summary": dict(self.current_evidence_summary),
+            "condition_coverage": dict(self.condition_coverage),
+            "completion_verdict": dict(self.completion_verdict),
         }

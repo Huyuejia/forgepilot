@@ -1,4 +1,4 @@
-# forgepilot
+# ForgePilot
 
 `forgepilot` 是一个面向代码仓库的轻量本地 coding agent。它直接跑在终端里，先看当前工作区，再用一组受约束的工具去读文件、改文件、跑命令，并把会话状态保存在本地 `.ForgePilot/` 目录里。
 
@@ -24,19 +24,24 @@
   - Anthropic 兼容 Messages API
   - DeepSeek Anthropic 兼容 API
 
-## 使用截图
+## 启动界面
 
-CLI 帮助信息：
+当前版本的命令、欢迎标题和交互提示符统一使用 `forgepilot`：
 
-![forgepilot help](assets/screenshots/forgepilot-help.png)
+```text
+$ python -m forgepilot --provider openai
++============================================================+
+|                         ForgePilot                         |
+|                    local coding agent                     |
+|                 calm shell, ready for work                |
++------------------------------------------------------------+
+| WORKSPACE  /path/to/repository                            |
+| MODEL     gpt-5.5              BRANCH    main             |
+| APPROVAL  ask                  SESSION   20260902-example  |
++============================================================+
 
-启动界面：
-
-![forgepilot start](assets/screenshots/forgepilot-start.png)
-
-REPL 内置命令与会话路径：
-
-![forgepilot repl](assets/screenshots/forgepilot-repl.png)
+forgepilot>
+```
 
 ## 从零启动：OpenAI API 示例
 
@@ -47,7 +52,7 @@ REPL 内置命令与会话路径：
 打开 Windows Terminal，选择 Ubuntu / WSL 终端。看到类似 `用户名@电脑名:~$` 的提示符后，输入：
 
 ```bash
-cd /mnt/d/AIProjects/pico-main/forgepilot
+cd /mnt/d/AIProjects/forgepilot/forgepilot
 ```
 
 ### 2. 创建 Python 环境并安装 ForgePilot
@@ -79,7 +84,7 @@ cp .env.example .env
 然后用 VS Code、记事本或其他编辑器打开这个文件：
 
 ```text
-D:\AIProjects\pico-main\forgepilot\.env
+D:\AIProjects\forgepilot\forgepilot\.env
 ```
 
 把里面内容替换成下面这样：
@@ -149,7 +154,7 @@ PY
 然后启动 ForgePilot：
 
 ```bash
-cd /mnt/d/AIProjects/pico-main/forgepilot
+cd /mnt/d/AIProjects/forgepilot/forgepilot
 source .venv/bin/activate
 python -m forgepilot --cwd /tmp/forgepilot-demo --provider openai
 ```
